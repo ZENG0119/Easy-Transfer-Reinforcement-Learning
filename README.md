@@ -1,1 +1,1 @@
-The project includes supporting files of the paper entitled "Stability-Oriented Multi-Objective Control Design for Power Converters Assisted by Deep Reinforcement Learning" submitted to IEEE TPEL-Letter.
+The project includes supporting files of the paper entitled "Easy Transfer Reinforcement Learning-Aided Stability-Oriented Multi-Objective Control Design for Grid-Following Converters" submitted to IEEE TPEL-Letter.
