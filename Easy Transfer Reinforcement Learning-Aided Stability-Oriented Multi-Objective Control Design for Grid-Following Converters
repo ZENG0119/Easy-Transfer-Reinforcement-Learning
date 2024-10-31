@@ -1,1 +1,117 @@
+%Enviroment: Matlab R2021b
+%Author: Shan Jiang, Yu Zeng, Ye Zhu, Josep Pou, and Georgios Konstantinou
+%Supported by Reinforcement Learning Toolbox
 
+%DRL training model
+% Open the target simulink model
+open_system('xxx.slx'); % File name xxx
+
+% Set up observation parameters
+obsInfo = rlNumericSpec([6 1],...
+    'LowerLimit',[-inf -inf -inf -inf -inf -inf]',...
+    'UpperLimit',[inf inf inf inf inf inf]'); 
+obsInfo.Name = 'observations';
+obsInfo.Description = 'Pact, Qact, eP and eQ, Int_eP, Int_eQ';
+numObservations = obsInfo.Dimension(1);
+
+% Set up action parameters
+actInfo = rlNumericSpec([4 1],...
+    'LowerLimit',[1 1 1 1]',...
+    'UpperLimit',[inf inf inf inf]');
+actInfo.Name = 'flow';
+numActions = actInfo.Dimension(1);
+
+% Create enviroment for the RL agent
+env = rlSimulinkEnv('xxx','xxx/RL Agent',...
+    obsInfo,actInfo);
+env.ResetFcn = @(in)localResetFcn(in); % Initialization of simulation parameters
+
+Ts = 1e-3; % Update cycle of the RL agent
+Tf = 0.1;  % Duration of offline simulation
+
+rng(0)
+
+% Create a neural network for the critic 
+% Create layers
+statePath = [
+    featureInputLayer(numObservations,'Normalization','none','Name','State')
+    fullyConnectedLayer(50,'Name','CriticStateFC1')
+    reluLayer('Name','CriticRelu1')
+    fullyConnectedLayer(25,'Name','CriticStateFC2')];
+actionPath = [
+    featureInputLayer(numActions,'Normalization','none','Name','Action')
+    fullyConnectedLayer(25,'Name','CriticActionFC1')];
+commonPath = [
+    additionLayer(2,'Name','add')
+    reluLayer('Name','CriticCommonRelu')
+    fullyConnectedLayer(1,'Name','CriticOutput')];
+% Connect layers
+criticNetwork = layerGraph();
+criticNetwork = addLayers(criticNetwork,statePath);
+criticNetwork = addLayers(criticNetwork,actionPath);
+criticNetwork = addLayers(criticNetwork,commonPath);
+criticNetwork = connectLayers(criticNetwork,'CriticStateFC2','add/in1');
+criticNetwork = connectLayers(criticNetwork,'CriticActionFC1','add/in2');
+% Plot the structure of critic NN
+figure
+plot(criticNetwork)
+% Set up options of the critic
+criticOpts = rlRepresentationOptions('LearnRate',1e-03,'GradientThreshold',1);% Learning rate and gradient
+critic = rlQValueRepresentation(criticNetwork,obsInfo,actInfo,'Observation',{'State'},'Action',{'Action'},criticOpts);
+
+% Create a neural network for the actor
+actorNetwork = [
+    featureInputLayer(numObservations,'Normalization','none','Name','State')
+    fullyConnectedLayer(3, 'Name','actorFC')
+    tanhLayer('Name','actorTanh')
+    fullyConnectedLayer(numActions,'Name','Action')
+    ];
+
+% Set up options of the actor
+actorOptions = rlRepresentationOptions('LearnRate',1e-04,'GradientThreshold',1);% Learning rate and gradient
+actor = rlDeterministicActorRepresentation(actorNetwork,obsInfo,actInfo,'Observation',{'State'},'Action',{'Action'},actorOptions);
+agentOpts = rlDDPGAgentOptions(...
+    'SampleTime',Ts,...
+    'TargetSmoothFactor',1e-3,...
+    'DiscountFactor',1, ...
+    'MiniBatchSize',64, ...
+    'ExperienceBufferLength',1e6); 
+agentOpts.NoiseOptions.Variance = 0.3;
+agentOpts.NoiseOptions.VarianceDecayRate = 1e-5;
+
+% Set up options for the agent
+agent = rlDDPGAgent(actor,critic,agentOpts);
+maxepisodes = 1000; %Maximum number of episodes
+maxsteps = ceil(Tf/Ts);
+trainOpts = rlTrainingOptions(...
+    'MaxEpisodes',maxepisodes, ...
+    'MaxStepsPerEpisode',maxsteps, ...
+    'ScoreAveragingWindowLength',20, ...
+    'Verbose',false, ...
+    'Plots','training-progress',...
+    'StopTrainingCriteria','AverageReward',... 
+    'StopTrainingValue',0,...
+    'SaveAgentCriteria','EpisodeCount',...
+    'SaveAgentValue',1,...
+    'SaveAgentDirectory','yyy');
+trainingStats = train(agent,env,trainOpts);
+simOpts = rlSimulationOptions('MaxSteps',maxsteps,'StopOnError','on');
+experiences = sim(env,agent,simOpts);
+
+% randomize reference signal
+function in = localResetFcn(in)
+h1 = 1e-3 + 3e-3*rand;
+h2 = 0.1 + 0.4*rand;
+blk = sprintf('CCCdesign/Lg');
+in = setBlockParameter(in,blk,'Value',num2str(h1));
+blk = sprintf('CCCdesign/Rg');
+in = setBlockParameter(in,blk,'Value',num2str(h2));
+r=25e6*rand;
+theta=2*pi*rand;
+h3 = r*cos(theta);
+h4 = r*sin(theta);
+blk = sprintf('CCCdesign/Pref');
+in = setBlockParameter(in,blk,'Value',num2str(h3));
+blk = sprintf('CCCdesign/Qref');
+in = setBlockParameter(in,blk,'Value',num2str(h4));
+end
